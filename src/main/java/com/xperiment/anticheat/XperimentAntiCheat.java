@@ -17,6 +17,6 @@ public class XperimentAntiCheat implements ModInitializer {
         AntiCheatTicker.register();
         AntiCheatCommands.register();
 
-        LOGGER.info("Xperiment Anti-Cheat 1.1.0 enabled.");
+        LOGGER.info("Xperiment Anti-Cheat 1.2.0 enabled.");
     }
 }

@@ -1,7 +1,8 @@
 package com.xperiment.anticheat;
 
-import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.xperiment.anticheat.check.ViolationManager;
+import com.xperiment.anticheat.evidence.Evidence;
+import com.xperiment.anticheat.evidence.EvidenceLogger;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.minecraft.commands.Commands;
 
@@ -37,6 +38,31 @@ public final class AntiCheatCommands {
                                 );
                                 return 1;
                             })))
+                    .then(Commands.literal("evidence")
+                        .executes(context -> {
+                            Evidence[] entries = EvidenceLogger.recent();
+                            context.getSource().sendSuccess(
+                                () -> net.minecraft.network.chat.Component.literal(
+                                    "Recent XAC evidence entries: " + entries.length
+                                ),
+                                false
+                            );
+
+                            int start = Math.max(0, entries.length - 10);
+                            for (int i = start; i < entries.length; i++) {
+                                Evidence e = entries[i];
+                                context.getSource().sendSuccess(
+                                    () -> net.minecraft.network.chat.Component.literal(
+                                        e.playerName() + " | " + e.check() +
+                                        " | " + e.reason() +
+                                        " | value=" + e.value() +
+                                        " | VL=" + e.violationLevel()
+                                    ),
+                                    false
+                                );
+                            }
+                            return entries.length;
+                        }))
             );
         });
     }
