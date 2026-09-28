@@ -1,6 +1,5 @@
 package com.xperiment.anticheat.check;
 
-import com.xperiment.anticheat.config.AntiCheatConfig;
 import com.xperiment.anticheat.evidence.EvidenceLogger;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.minecraft.server.level.ServerPlayer;
@@ -13,70 +12,56 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class CombatCheck {
     private CombatCheck() {}
-
     private static final Map<UUID, Long> LAST_ATTACK_TICK = new ConcurrentHashMap<>();
-    private static final Map<UUID, Integer> FAST_ATTACKS = new ConcurrentHashMap<>();
+    private static final Map<UUID, Integer> FAST_ATTACK_STREAK = new ConcurrentHashMap<>();
+    private static final double MAX_REACH = 3.15;
+    private static final long MIN_ATTACK_INTERVAL_TICKS = 2;
+    private static final int FAST_STREAK_FLAG = 4;
 
     public static void register() {
         AttackEntityCallback.EVENT.register((player, world, hand, entity, hitResult) -> {
-            if (world.isClientSide() || !(player instanceof ServerPlayer serverPlayer)) {
-                return InteractionResult.PASS;
-            }
-
-            long tick = serverPlayer.serverLevel().getGameTime();
-            Long last = LAST_ATTACK_TICK.put(serverPlayer.getUUID(), tick);
-
-            if (last != null) {
-                long interval = tick - last;
-
-                if (interval <= AntiCheatConfig.MIN_ATTACK_INTERVAL_TICKS) {
-                    int count = FAST_ATTACKS.merge(serverPlayer.getUUID(), 1, Integer::sum);
-                    ViolationManager.add(serverPlayer, AntiCheatConfig.FAST_ATTACK_VL);
-                    EvidenceLogger.record(
-                        serverPlayer,
-                        "attack-rate",
-                        "Repeated attacks below the configured tick interval",
-                        interval
-                    );
-
-                    if (count > AntiCheatConfig.FAST_ATTACK_STREAK_RESET) {
-                        FAST_ATTACKS.put(serverPlayer.getUUID(), 0);
-                    }
-                } else {
-                    FAST_ATTACKS.computeIfPresent(
-                        serverPlayer.getUUID(),
-                        (id, count) -> Math.max(0, count - 1)
-                    );
-                }
-            }
-
-            validateReach(serverPlayer, entity);
+            if (!(player instanceof ServerPlayer serverPlayer)) return InteractionResult.PASS;
+            if (serverPlayer.isSpectator() || !entity.isAttackable()) return InteractionResult.PASS;
+            checkReach(serverPlayer, entity);
+            checkAttackRate(serverPlayer);
             return InteractionResult.PASS;
         });
     }
 
-    private static void validateReach(ServerPlayer player, Entity target) {
-        if (!player.isAlive() || target.isRemoved() || target == player) {
-            return;
-        }
-
-        double distanceSquared = player.distanceToSqr(target);
-        double max = AntiCheatConfig.MAX_COMBAT_REACH + target.getPickRadius();
-        double maxSquared = max * max;
-
-        if (distanceSquared > maxSquared) {
-            ViolationManager.add(player, AntiCheatConfig.REACH_VL);
-            EvidenceLogger.record(
-                player,
-                "reach",
-                "Server-side distance exceeded configured combat reach",
-                Math.sqrt(distanceSquared)
-            );
+    private static void checkReach(ServerPlayer player, Entity target) {
+        double distance = player.distanceTo(target);
+        if (distance > MAX_REACH) {
+            ViolationManager.add(player, 2.0);
+            EvidenceLogger.record(player, "reach",
+                "target=" + target.getType() + " distance="
+                    + String.format(java.util.Locale.ROOT, "%.3f", distance)
+                    + " max=" + MAX_REACH, distance);
         }
     }
 
-    public static void remove(UUID uuid) {
-        LAST_ATTACK_TICK.remove(uuid);
-        FAST_ATTACKS.remove(uuid);
+    private static void checkAttackRate(ServerPlayer player) {
+        long now = player.serverLevel().getGameTime();
+        Long previous = LAST_ATTACK_TICK.put(player.getUUID(), now);
+        if (previous == null) return;
+        long interval = now - previous;
+
+        if (interval < MIN_ATTACK_INTERVAL_TICKS) {
+            int streak = FAST_ATTACK_STREAK.merge(player.getUUID(), 1, Integer::sum);
+            if (streak >= FAST_STREAK_FLAG) {
+                ViolationManager.add(player, 1.0);
+                EvidenceLogger.record(player, "attack_rate",
+                    "intervalTicks=" + interval + " streak=" + streak, interval);
+                FAST_ATTACK_STREAK.put(player.getUUID(), 0);
+            }
+        } else {
+            FAST_ATTACK_STREAK.compute(player.getUUID(),
+                (id, value) -> value == null ? 0 : Math.max(0, value - 1));
+        }
+    }
+
+    public static void clear(ServerPlayer player) {
+        LAST_ATTACK_TICK.remove(player.getUUID());
+        FAST_ATTACK_STREAK.remove(player.getUUID());
+        EvidenceLogger.clear(player);
     }
 }

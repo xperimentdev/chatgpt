@@ -1,52 +1,37 @@
 package com.xperiment.anticheat.evidence;
 
 import com.xperiment.anticheat.XperimentAntiCheat;
-import com.xperiment.anticheat.check.ViolationManager;
 import net.minecraft.server.level.ServerPlayer;
 
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class EvidenceLogger {
     private EvidenceLogger() {}
+    private static final int MAX_EVENTS_PER_PLAYER = 50;
+    private static final Map<UUID, Deque<String>> EVIDENCE = new ConcurrentHashMap<>();
 
-    private static final int MAX_ENTRIES = 500;
-    private static final Deque<Evidence> ENTRIES = new ArrayDeque<>();
-
-    public static synchronized void record(
-        ServerPlayer player,
-        String check,
-        String reason,
-        double value
-    ) {
-        double vl = ViolationManager.get(player);
-        Evidence evidence = new Evidence(
-            Instant.now(),
-            player.getUUID(),
-            player.getGameProfile().name(),
-            check,
-            reason,
-            value,
-            vl
-        );
-
-        if (ENTRIES.size() >= MAX_ENTRIES) {
-            ENTRIES.removeFirst();
+    public static void record(ServerPlayer player, String check, String details, double value) {
+        Deque<String> events = EVIDENCE.computeIfAbsent(player.getUUID(), ignored -> new ArrayDeque<>());
+        synchronized (events) {
+            if (events.size() >= MAX_EVENTS_PER_PLAYER) events.removeFirst();
+            String line = Instant.now() + " | player=" + player.getGameProfile().name()
+                + " | check=" + check + " | value="
+                + String.format(java.util.Locale.ROOT, "%.3f", value) + " | " + details;
+            events.addLast(line);
+            XperimentAntiCheat.LOGGER.warn(line);
         }
-        ENTRIES.addLast(evidence);
-
-        XperimentAntiCheat.LOGGER.info(
-            "[EVIDENCE] player={} check={} reason={} value={} vl={}",
-            evidence.playerName(),
-            evidence.check(),
-            evidence.reason(),
-            evidence.value(),
-            evidence.violationLevel()
-        );
     }
 
-    public static synchronized Evidence[] recent() {
-        return ENTRIES.toArray(Evidence[]::new);
+    public static String dump(ServerPlayer player) {
+        Deque<String> events = EVIDENCE.get(player.getUUID());
+        if (events == null) return "No evidence recorded.";
+        synchronized (events) { return String.join("\n", events); }
     }
+
+    public static void clear(ServerPlayer player) { EVIDENCE.remove(player.getUUID()); }
 }
